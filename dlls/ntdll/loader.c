@@ -2855,6 +2855,8 @@ static NTSTATUS load_so_dll( LPCWSTR load_path, const UNICODE_STRING *nt_name,
     WINE_MODREF *wm;
     struct load_so_dll_params params = { *nt_name, &module };
 
+    if (!__wine_unix_call_dispatcher) return STATUS_INVALID_IMAGE_NOT_MZ;  /* proskrnl: no .so builtins */
+
     TRACE( "trying %s as so lib\n", debugstr_us(nt_name) );
     if ((status = WINE_UNIX_CALL( unix_load_so_dll, &params )))
     {
@@ -3415,6 +3417,7 @@ NTSTATUS WINAPI __wine_unix_spawnvp( char * const argv[], int wait )
 {
     struct wine_spawnvp_params params = { (char **)argv, wait };
 
+    if (!__wine_unix_call_dispatcher) return STATUS_NOT_SUPPORTED;  /* proskrnl: no unix side */
     return WINE_UNIX_CALL( unix_wine_spawnvp, &params );
 }
 
@@ -3424,6 +3427,7 @@ NTSTATUS WINAPI __wine_unix_spawnvp( char * const argv[], int wait )
  */
 unsigned int CDECL wine_server_call( void *req_ptr )
 {
+    if (!__wine_unix_call_dispatcher) return STATUS_NOT_SUPPORTED;  /* proskrnl: no wineserver */
     return WINE_UNIX_CALL( unix_wine_server_call, req_ptr );
 }
 
@@ -3436,6 +3440,7 @@ NTSTATUS CDECL wine_server_fd_to_handle( int fd, unsigned int access, unsigned i
 {
     struct wine_server_fd_to_handle_params params = { fd, access, attributes, handle };
 
+    if (!__wine_unix_call_dispatcher) return STATUS_NOT_SUPPORTED;  /* proskrnl: no unix fds */
     return WINE_UNIX_CALL( unix_wine_server_fd_to_handle, &params );
 }
 
@@ -3448,6 +3453,7 @@ NTSTATUS CDECL wine_server_handle_to_fd( HANDLE handle, unsigned int access, int
 {
     struct wine_server_handle_to_fd_params params = { handle, access, unix_fd, options };
 
+    if (!__wine_unix_call_dispatcher) return STATUS_NOT_SUPPORTED;  /* proskrnl: no unix fds */
     return WINE_UNIX_CALL( unix_wine_server_handle_to_fd, &params );
 }
 

@@ -63,6 +63,13 @@ static void init_options(void)
 {
     unsigned int offset = page_size * (sizeof(void *) / 4);
 
+    if (!__wine_unix_call_dispatcher)  /* proskrnl: no options page behind the PEB */
+    {
+        static struct __wine_debug_channel default_option =
+            { (1 << __WINE_DBCL_ERR) | (1 << __WINE_DBCL_FIXME), "" };
+        debug_options = &default_option;
+        return;
+    }
     debug_options = (struct __wine_debug_channel *)((char *)NtCurrentTeb()->Peb + offset);
     while (debug_options[nb_debug_options].name[0]) nb_debug_options++;
 }
@@ -168,6 +175,18 @@ int WINAPI __wine_dbg_write( const char *str, unsigned int len )
 {
     struct wine_dbg_write_params params = { str, len };
 
+    if (!__wine_unix_call_dispatcher)  /* proskrnl: no unixlib; emit through the kernel */
+    {
+        UNICODE_STRING us;
+        WCHAR buffer[256];
+        unsigned int i, n = min( len, ARRAY_SIZE(buffer) );
+
+        for (i = 0; i < n; i++) buffer[i] = (unsigned char)str[i];
+        us.Buffer = buffer;
+        us.Length = us.MaximumLength = n * sizeof(WCHAR);
+        NtDisplayString( &us );
+        return len;
+    }
     return WINE_UNIX_CALL( unix_wine_dbg_write, &params );
 }
 

@@ -372,6 +372,12 @@ LONGLONG WINAPI RtlGetSystemTimePrecise( void )
 {
     LONGLONG ret;
 
+    if (!__wine_unix_call_dispatcher)  /* proskrnl: KUSER_SHARED_DATA is the clock */
+    {
+        LARGE_INTEGER now;
+        NtQuerySystemTime( &now );
+        return now.QuadPart;
+    }
     WINE_UNIX_CALL( unix_system_time_precise, &ret );
     return ret;
 }
