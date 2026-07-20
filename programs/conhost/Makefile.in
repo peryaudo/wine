@@ -8,5 +8,6 @@ VER_PRODUCTVERSION = 6,1,7601,22045
 
 SOURCES = \
 	conhost.c \
+	proskrnl.c \
 	conhost.rc \
 	window.c

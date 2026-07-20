@@ -23,6 +23,7 @@
 #include <limits.h>
 
 #include "conhost.h"
+#include "proskrnl.h"
 
 #include "wine/server.h"
 #include "wine/debug.h"
@@ -462,7 +463,14 @@ static void write_char( struct screen_buffer *screen_buffer, WCHAR ch, RECT *upd
 
 static NTSTATUS read_complete( struct console *console, NTSTATUS status, const void *buf, size_t size, int signal )
 {
-    SERVER_START_REQ( get_next_console_request )
+    if (proskrnl_transport_active()) /* no wineserver below: the proskrnl kernel transport (proskrnl.c) */
+        status = proskrnl_console_read_complete( console->server, status,
+                                                 console->read_ioctl == IOCTL_CONDRV_READ_CONSOLE_CONTROL
+                                                 ? &console->key_state : NULL,
+                                                 console->read_ioctl == IOCTL_CONDRV_READ_CONSOLE_CONTROL
+                                                 ? sizeof(console->key_state) : 0,
+                                                 buf, size, signal );
+    else SERVER_START_REQ( get_next_console_request )
     {
         req->handle = wine_server_obj_handle( console->server );
         req->signal = signal;
@@ -2837,7 +2845,12 @@ static NTSTATUS process_console_ioctls( struct console *console )
         if (status) out_size = 0;
 
         console->signaled = console->record_count != 0;
-        SERVER_START_REQ( get_next_console_request )
+        if (proskrnl_transport_active()) /* no wineserver below: the proskrnl kernel transport (proskrnl.c) */
+            status = proskrnl_next_console_request( console->server, status, console->signaled,
+                                                    ioctl_buffer, out_size,
+                                                    ioctl_buffer, ioctl_buffer_size,
+                                                    &code, &output, &out_size, &in_size );
+        else SERVER_START_REQ( get_next_console_request )
         {
             req->handle = wine_server_obj_handle( console->server );
             req->status = status;
