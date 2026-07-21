@@ -192,8 +192,21 @@ static const WCHAR *get_csidl_dir( DWORD csidl )
 {
     WCHAR buffer[MAX_PATH], *str;
     int len;
+    /* proskrnl: shell32 is a delay import; on a disk without it the
+     * delay-load failure hook raises a noncontinuable exception, crashing a
+     * registry-only InstallHinfSection the moment an AddReg entry references
+     * a CSIDL dirid. Resolve SHGetSpecialFolderPathW lazily and treat an
+     * absent shell32 as "folder not found" (the graceful get_unknown_dirid
+     * path). Under regular Wine/Windows shell32 always loads and the call is
+     * made exactly as before. */
+    static BOOL (WINAPI *pSHGetSpecialFolderPathW)( HWND, WCHAR *, int, BOOL );
+    if (!pSHGetSpecialFolderPathW)
+    {
+        HMODULE shell32 = LoadLibraryW( L"shell32.dll" );
+        if (shell32) pSHGetSpecialFolderPathW = (void *)GetProcAddress( shell32, "SHGetSpecialFolderPathW" );
+    }
 
-    if (!SHGetSpecialFolderPathW( NULL, buffer, csidl, TRUE ))
+    if (!pSHGetSpecialFolderPathW || !pSHGetSpecialFolderPathW( NULL, buffer, csidl, TRUE ))
     {
         FIXME( "CSIDL %lx not found\n", csidl );
         return get_unknown_dirid();
