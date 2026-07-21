@@ -42,6 +42,26 @@
 
 WINE_DEFAULT_DEBUG_CHANNEL(setupapi);
 
+/* proskrnl: ole32 is a delay import; on a disk without it the delay-load
+ * failure hook raises a noncontinuable exception on the first CoInitialize,
+ * killing a registry-only install before its AddReg pass runs. Resolve COM
+ * lazily and let the RegisterDlls machinery run COM-less when ole32 is
+ * absent. */
+static HRESULT (WINAPI *pCoInitialize)( LPVOID );
+static void (WINAPI *pCoUninitialize)(void);
+
+static BOOL load_ole32(void)
+{
+    static HMODULE ole32;
+    if (!ole32)
+    {
+        if (!(ole32 = LoadLibraryW( L"ole32.dll" ))) return FALSE;
+        pCoInitialize = (void *)GetProcAddress( ole32, "CoInitialize" );
+        pCoUninitialize = (void *)GetProcAddress( ole32, "CoUninitialize" );
+    }
+    return pCoInitialize && pCoUninitialize;
+}
+
 /* info passed to callback functions dealing with files */
 struct files_callback_info
 {
@@ -1191,13 +1211,14 @@ BOOL WINAPI SetupInstallFromInfSectionW( HWND owner, HINF hinf, PCWSTR section, 
             info.callback_context = context;
         }
 
-        hr = CoInitialize(NULL);
+        if (load_ole32()) hr = pCoInitialize(NULL);
+        else hr = E_FAIL;  /* proskrnl: no ole32 on disk; run COM-less */
 
         ret = iterate_section_fields( hinf, section, L"RegisterDlls", register_dlls_callback, &info );
         for (i = 0; i < info.modules_count; i++) FreeLibrary( info.modules[i] );
 
         if (SUCCEEDED(hr))
-            CoUninitialize();
+            pCoUninitialize();
 
         free( info.modules );
         if (!ret) return FALSE;
@@ -1213,13 +1234,14 @@ BOOL WINAPI SetupInstallFromInfSectionW( HWND owner, HINF hinf, PCWSTR section, 
             info.callback_context = context;
         }
 
-        hr = CoInitialize(NULL);
+        if (load_ole32()) hr = pCoInitialize(NULL);
+        else hr = E_FAIL;  /* proskrnl: no ole32 on disk; run COM-less */
 
         ret = iterate_section_fields( hinf, section, L"UnregisterDlls", register_dlls_callback, &info );
         for (i = 0; i < info.modules_count; i++) FreeLibrary( info.modules[i] );
 
         if (SUCCEEDED(hr))
-            CoUninitialize();
+            pCoUninitialize();
 
         free( info.modules );
         if (!ret) return FALSE;
