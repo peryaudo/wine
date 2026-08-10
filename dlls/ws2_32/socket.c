@@ -728,7 +728,13 @@ BOOL WINAPI DllMain( HINSTANCE instance, DWORD reason, void *reserved )
     switch (reason)
     {
     case DLL_PROCESS_ATTACH:
-        return !__wine_init_unix_call();
+        /* proskrnl: no unixlib exists below ntdll, so this init can never
+           succeed and refusing here takes down every process that merely
+           IMPORTS ws2_32 (a 32-bit GUI app pulls it in through wsock32).
+           Load anyway: WSAStartup and the rest of the PE-side bookkeeping
+           need no unix call. */
+        __wine_init_unix_call();
+        return TRUE;
 
     case DLL_THREAD_DETACH:
         free_per_thread_data();
