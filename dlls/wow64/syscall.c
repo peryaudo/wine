@@ -988,6 +988,7 @@ static DWORD WINAPI process_init( RTL_RUN_ONCE *once, void *param, void **contex
     UNICODE_STRING str = RTL_CONSTANT_STRING( L"ntdll.dll" );
     SYSTEM_BASIC_INFORMATION info;
     ULONG *p__wine_syscall_dispatcher, *p__wine_unix_call_dispatcher;
+    void **host_unix_call_dispatcher;
     const SYSTEM_SERVICE_TABLE *psdwhwin32;
 
     RtlWow64GetProcessMachines( GetCurrentProcess(), &current_machine, &native_machine );
@@ -1007,6 +1008,7 @@ static DWORD WINAPI process_init( RTL_RUN_ONCE *once, void *param, void **contex
 
     LdrGetDllHandle( NULL, 0, &str, &module );
     GET_PTR( LdrSystemDllInitBlock );
+    host_unix_call_dispatcher = RtlFindExportedRoutineByName( module, "__wine_unix_call_dispatcher" );
 
     module = load_64bit_module( get_cpu_dll_name() );
     GET_PTR( BTCpuGetBopCode );
@@ -1045,7 +1047,13 @@ static DWORD WINAPI process_init( RTL_RUN_ONCE *once, void *param, void **contex
     GET_PTR( __wine_unix_call_dispatcher );
 
     *p__wine_syscall_dispatcher = PtrToUlong( pBTCpuGetBopCode() );
-    *p__wine_unix_call_dispatcher = PtrToUlong( p__wine_get_unix_opcode() );
+    /* Publish the unix-call BOP to the guest only when the host ntdll has a live
+     * unixlib below it. With no unix side (proskrnl), the guest's dispatcher must
+     * stay NULL so the 32-bit ntdll takes the same no-unixlib fallbacks the host
+     * ntdll does; the BOP would otherwise route guest unix calls into wow64cpu's
+     * callq through the host's NULL dispatcher. */
+    if (host_unix_call_dispatcher && *host_unix_call_dispatcher)
+        *p__wine_unix_call_dispatcher = PtrToUlong( p__wine_get_unix_opcode() );
 
     if (wow64info->CpuFlags & WOW64_CPUFLAGS_SOFTWARE) create_cross_process_work_list( wow64info );
 
