@@ -55,8 +55,11 @@ BOOL WINAPI DllMain(HINSTANCE hInst, DWORD reason, PVOID pvReserved)
             DisableThreadLibraryCalls(hInst);
             init_empty_store();
             crypt_oid_init();
+            /* proskrnl: as in ws2_32's DllMain — load without a unix side
+               rather than failing every importer of crypt32.  CRYPT32_CALL is
+               skipped with it; it would fault on the NULL dispatcher. */
             if (__wine_init_unix_call())
-                return FALSE;
+                break;
             CRYPT32_CALL( process_attach, NULL );
             break;
         case DLL_PROCESS_DETACH:
