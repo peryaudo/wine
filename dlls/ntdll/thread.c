@@ -59,15 +59,116 @@ static inline struct debug_info *get_info(void)
 #endif
 }
 
+/* proskrnl: with no unixlib there is no options page, so the WINEDEBUG
+ * parsing the unix side does at process start (unix/debug.c parse_options)
+ * happens here instead, from the PE-visible process environment. Same
+ * syntax, same semantics, bounded static storage; the terminator entry's
+ * flags carry the default, exactly the layout the options page uses. */
+#define PROSKRNL_MAX_DEBUG_OPTIONS 64
+static struct __wine_debug_channel proskrnl_options[PROSKRNL_MAX_DEBUG_OPTIONS + 1];
+
+static void proskrnl_add_option( const char *name, unsigned char set, unsigned char clear )
+{
+    /* the terminator entry holds the default flags; read it before the
+     * insertion memmove shifts that entry up a slot */
+    unsigned char default_flags = proskrnl_options[nb_debug_options].flags;
+    int min = 0, max = nb_debug_options - 1, pos, res;
+
+    if (!name[0] || !strcmp( name, "all" ))
+    {
+        proskrnl_options[nb_debug_options].flags = (default_flags & ~clear) | set;
+        return;
+    }
+    if (strlen( name ) >= sizeof(proskrnl_options[0].name)) return;
+
+    while (min <= max)
+    {
+        pos = (min + max) / 2;
+        res = strcmp( name, proskrnl_options[pos].name );
+        if (!res)
+        {
+            proskrnl_options[pos].flags = (proskrnl_options[pos].flags & ~clear) | set;
+            return;
+        }
+        if (res < 0) max = pos - 1;
+        else min = pos + 1;
+    }
+    if (nb_debug_options >= PROSKRNL_MAX_DEBUG_OPTIONS) return;
+
+    pos = min;
+    memmove( &proskrnl_options[pos + 1], &proskrnl_options[pos],
+             (nb_debug_options + 1 - pos) * sizeof(proskrnl_options[0]) );
+    strcpy( proskrnl_options[pos].name, name );
+    proskrnl_options[pos].flags = (default_flags & ~clear) | set;
+    nb_debug_options++;
+}
+
+static void proskrnl_parse_winedebug(void)
+{
+    static const char * const debug_classes[] = { "fixme", "err", "warn", "trace" };
+    UNICODE_STRING name = RTL_CONSTANT_STRING( L"WINEDEBUG" );
+    UNICODE_STRING value;
+    WCHAR valueW[512];
+    char options[512], *opt, *next, *p;
+    unsigned int i;
+
+    proskrnl_options[0].flags = (1 << __WINE_DBCL_ERR) | (1 << __WINE_DBCL_FIXME);
+    debug_options = proskrnl_options;
+
+    value.Buffer = valueW;
+    value.Length = 0;
+    value.MaximumLength = sizeof(valueW) - sizeof(WCHAR);
+    if (RtlQueryEnvironmentVariable_U( NULL, &name, &value )) return;
+    valueW[value.Length / sizeof(WCHAR)] = 0;
+    for (i = 0; i <= value.Length / sizeof(WCHAR); i++)
+        options[i] = valueW[i] < 0x80 ? (char)valueW[i] : '?';
+
+    for (opt = options; opt; opt = next)
+    {
+        unsigned char set = 0, clear = 0;
+
+        if ((next = strchr( opt, ',' ))) *next++ = 0;
+        /* per-process prefixes are not supported here: no app-name authority
+         * short of re-deriving it, and every proskrnl use sets WINEDEBUG on
+         * the one process it launches */
+        if (strchr( opt, ':' )) continue;
+
+        p = opt + strcspn( opt, "+-" );
+        if (!p[0]) p = opt;  /* assume it's a debug channel name */
+
+        if (p > opt)
+        {
+            for (i = 0; i < ARRAY_SIZE(debug_classes); i++)
+            {
+                int len = strlen( debug_classes[i] );
+                if (len != (p - opt)) continue;
+                if (!memcmp( opt, debug_classes[i], len ))
+                {
+                    if (*p == '+') set |= 1 << i;
+                    else clear |= 1 << i;
+                    break;
+                }
+            }
+            if (i == ARRAY_SIZE(debug_classes)) continue;  /* bad class name */
+        }
+        else
+        {
+            if (*p == '-') clear = ~0;
+            else set = ~0;
+        }
+        if (*p == '+' || *p == '-') p++;
+        if (!p[0]) continue;
+        proskrnl_add_option( p, set, clear );
+    }
+}
+
 static void init_options(void)
 {
     unsigned int offset = page_size * (sizeof(void *) / 4);
 
     if (!__wine_unix_call_dispatcher)  /* proskrnl: no options page behind the PEB */
     {
-        static struct __wine_debug_channel default_option =
-            { (1 << __WINE_DBCL_ERR) | (1 << __WINE_DBCL_FIXME), "" };
-        debug_options = &default_option;
+        proskrnl_parse_winedebug();
         return;
     }
     debug_options = (struct __wine_debug_channel *)((char *)NtCurrentTeb()->Peb + offset);
