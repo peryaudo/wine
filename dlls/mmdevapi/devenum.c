@@ -386,7 +386,7 @@ static HRESULT set_driver_prop_value(GUID *id, const EDataFlow flow, const PROPE
     params.buffer_size = &size;
 
     while (1) {
-        __wine_unix_call(drvs.module_unixlib, get_prop_value, &params);
+        mmdevapi_unix_call(drvs.module_unixlib, get_prop_value, &params);
 
         if (params.result != E_NOT_SUFFICIENT_BUFFER)
             break;
@@ -674,7 +674,7 @@ HRESULT load_driver_devices(EDataFlow flow)
     do {
         free(params.endpoints);
         params.endpoints = malloc(params.size);
-        __wine_unix_call(drvs.module_unixlib, get_endpoint_ids, &params);
+        mmdevapi_unix_call(drvs.module_unixlib, get_endpoint_ids, &params);
     } while (params.result == HRESULT_FROM_WIN32(ERROR_INSUFFICIENT_BUFFER));
 
     if (FAILED(params.result))

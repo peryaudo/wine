@@ -112,9 +112,24 @@ typedef struct MMDevice {
     struct list entry;
 } MMDevice;
 
+/* proskrnl: TRUE once load_driver has loaded a PE driver because no unixlib
+ * exists below (__wine_load_unix_lib answered ntdll's no-.so-builtins
+ * refusal) -- a driver's module_unixlib is then its PE-exported
+ * __wine_unix_call_funcs table.  Latched on that behaviour alone, the
+ * conhost transport probe's shape, so it can never flip under a real
+ * unixlib (level-1 dormancy). */
+extern BOOL mmdevapi_pe_drivers;
+
+static inline NTSTATUS mmdevapi_unix_call(unixlib_handle_t handle, const unsigned int code, void *args)
+{
+    if (mmdevapi_pe_drivers)
+        return ((NTSTATUS (* const *)(void *))(UINT_PTR)handle)[code](args);
+    return __wine_unix_call(handle, code, args);
+}
+
 static inline void wine_unix_call(const unsigned int code, void *args)
 {
-    const NTSTATUS status = __wine_unix_call(drvs.module_unixlib, code, args);
+    const NTSTATUS status = mmdevapi_unix_call(drvs.module_unixlib, code, args);
     assert(!status);
 }
 

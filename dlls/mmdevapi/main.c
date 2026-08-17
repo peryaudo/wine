@@ -49,8 +49,9 @@ WINE_DEFAULT_DEBUG_CHANNEL(mmdevapi);
 
 DriverFuncs drvs;
 static DriverFuncs midi_driver;
+BOOL mmdevapi_pe_drivers = FALSE;
 
-#define MIDI_CALL(code,args)  __wine_unix_call( midi_driver.module_unixlib, code, args )
+#define MIDI_CALL(code,args)  mmdevapi_unix_call( midi_driver.module_unixlib, code, args )
 
 const WCHAR drv_keyW[] = L"Software\\Wine\\Drivers";
 
@@ -69,6 +70,13 @@ static const char *get_priority_string(int prio)
     return "Invalid";
 }
 
+static void unload_driver_module( unixlib_module_t module )
+{
+    /* proskrnl: the PE leg of load_driver */
+    if (mmdevapi_pe_drivers) LdrUnloadDll( (HMODULE)(UINT_PTR)module );
+    else __wine_unload_unix_lib( module );
+}
+
 static BOOL load_driver(const WCHAR *name, DriverFuncs *driver)
 {
     NTSTATUS status;
@@ -84,13 +92,42 @@ static BOOL load_driver(const WCHAR *name, DriverFuncs *driver)
     TRACE("Attempting to load %s\n", wine_dbgstr_w(driver_module));
 
     status = __wine_load_unix_lib( &str, &driver->module, &driver->module_unixlib );
-    if (status)
+    if (status == STATUS_INVALID_INFO_CLASS)
+    {
+        /* proskrnl: no unixlib machinery exists below -- winecrt0's
+         * __wine_load_unix_lib is NtQueryVirtualMemory(MemoryWineLoadUnixLibByName),
+         * a class only a wine unix side implements, and proskrnl's kernel
+         * refuses it with exactly this status (a live unix side answers
+         * STATUS_DLL_NOT_FOUND for a missing .so, never this).  Load the
+         * driver as an ordinary PE module instead and dispatch through its
+         * exported __wine_unix_call_funcs table (see mmdevapi_unix_call). */
+        ANSI_STRING func_name;
+        HMODULE module;
+        void *proc;
+
+        if ((status = LdrLoadDll( NULL, 0, &str, &module )))
+        {
+            TRACE("Unable to load %s as PE: %lx\n", wine_dbgstr_w(driver_module), status );
+            return FALSE;
+        }
+        RtlInitAnsiString( &func_name, "__wine_unix_call_funcs" );
+        if ((status = LdrGetProcedureAddress( module, &func_name, 0, &proc )))
+        {
+            TRACE("%s has no __wine_unix_call_funcs export: %lx\n", wine_dbgstr_w(driver_module), status );
+            LdrUnloadDll( module );
+            return FALSE;
+        }
+        driver->module = (unixlib_module_t)(UINT_PTR)module;
+        driver->module_unixlib = (unixlib_handle_t)(UINT_PTR)proc;
+        mmdevapi_pe_drivers = TRUE;
+    }
+    else if (status)
     {
         TRACE("Unable to load %s: %lx\n", wine_dbgstr_w(driver_module), status );
         return FALSE;
     }
 
-    if ((status = __wine_unix_call(driver->module_unixlib, process_attach, NULL))) {
+    if ((status = mmdevapi_unix_call(driver->module_unixlib, process_attach, NULL))) {
         ERR("Unable to initialize library: %lx\n", status);
         goto fail;
     }
@@ -100,7 +137,7 @@ static BOOL load_driver(const WCHAR *name, DriverFuncs *driver)
     params.name     = params.name ? params.name + 1 : path;
     params.priority = Priority_Neutral;
 
-    if ((status = __wine_unix_call(driver->module_unixlib, test_connect, &params))) {
+    if ((status = mmdevapi_unix_call(driver->module_unixlib, test_connect, &params))) {
         ERR("Unable to retrieve driver priority: %lx\n", status);
         goto fail;
     }
@@ -114,7 +151,7 @@ static BOOL load_driver(const WCHAR *name, DriverFuncs *driver)
 
     return TRUE;
 fail:
-    __wine_unload_unix_lib( driver->module );
+    unload_driver_module( driver->module );
     return FALSE;
 }
 
@@ -150,15 +187,15 @@ static BOOL WINAPI init_driver(INIT_ONCE *once, void *param, void **context)
         driver.priority = Priority_Unavailable;
         if(load_driver(p, &driver)){
             if(driver.priority == Priority_Unavailable)
-                __wine_unload_unix_lib(driver.module);
+                unload_driver_module(driver.module);
             else if(!drvs.module || driver.priority > drvs.priority){
                 TRACE("Selecting driver %s with priority %s\n",
                         wine_dbgstr_w(p), get_priority_string(driver.priority));
                 if(drvs.module)
-                    __wine_unload_unix_lib(drvs.module);
+                    unload_driver_module(drvs.module);
                 drvs = driver;
             }else
-                __wine_unload_unix_lib(driver.module);
+                unload_driver_module(driver.module);
         }else
             TRACE("Failed to load driver %s\n", wine_dbgstr_w(p));
 
@@ -214,8 +251,8 @@ BOOL WINAPI DllMain(HINSTANCE hinstDLL, DWORD fdwReason, LPVOID lpvReserved)
             wine_unix_call( main_loop_stop, NULL );
             if (drvs.module_unixlib)
             {
-                __wine_unload_unix_lib( drvs.module );
-                if (midi_driver.module != drvs.module) __wine_unload_unix_lib( midi_driver.module );
+                unload_driver_module( drvs.module );
+                if (midi_driver.module != drvs.module) unload_driver_module( midi_driver.module );
             }
             MMDevEnum_Free();
             break;
