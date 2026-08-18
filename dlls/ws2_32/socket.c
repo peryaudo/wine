@@ -585,6 +585,7 @@ static BOOL is_valid_socket( SOCKET socket )
 static INT WINAPI WSA_DefaultBlockingHook( FARPROC x );
 
 int num_startup;
+BOOL ws_pe_resolver; /* proskrnl: dispatch the resolver unixlib through PE wsresolv.dll */
 static FARPROC blocking_hook = (FARPROC)WSA_DefaultBlockingHook;
 
 /* function prototypes */
@@ -732,8 +733,17 @@ BOOL WINAPI DllMain( HINSTANCE instance, DWORD reason, void *reserved )
            succeed and refusing here takes down every process that merely
            IMPORTS ws2_32 (a 32-bit GUI app pulls it in through wsock32).
            Load anyway: WSAStartup and the rest of the PE-side bookkeeping
-           need no unix call. */
-        __wine_init_unix_call();
+           need no unix call.
+
+           STATUS_INVALID_INFO_CLASS is the latch: winecrt0's
+           __wine_init_unix_call is NtQueryVirtualMemory(MemoryWineLoadUnixLib),
+           an info class only a wine unix side implements, and proskrnl's
+           kernel refuses it with exactly this status (a live unix side
+           answers 0; a missing .so answers STATUS_DLL_NOT_FOUND, never
+           this).  With the latch set the resolver unixlib entries
+           (WS_CALL, ws2_32_private.h) dispatch through PE wsresolv.dll
+           instead of the dead dispatcher (ws2_32_resolver_call, protocol.c). */
+        ws_pe_resolver = __wine_init_unix_call() == STATUS_INVALID_INFO_CLASS;
         return TRUE;
 
     case DLL_THREAD_DETACH:

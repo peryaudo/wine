@@ -27,7 +27,43 @@
 WINE_DEFAULT_DEBUG_CHANNEL(winsock);
 WINE_DECLARE_DEBUG_CHANNEL(winediag);
 
-#define WS_CALL(func, params) WINE_UNIX_CALL( ws_unix_ ## func, params )
+/* proskrnl: with the DllMain latch set, the resolver entries dispatch
+ * through PE wsresolv.dll (ws2_32_resolver_call below) instead of the
+ * dead unix-call dispatcher; on regular Wine the latch never sets and
+ * this is the plain WINE_UNIX_CALL it always was. */
+#define WS_CALL(func, params) (ws_pe_resolver ? ws2_32_resolver_call( ws_unix_ ## func, params ) \
+                                              : WINE_UNIX_CALL( ws_unix_ ## func, params ))
+
+NTSTATUS ws2_32_resolver_call( unsigned int code, void *args )
+{
+    /* the exported table's shape, spelled without unixlib_entry_t (a
+       WINE_UNIX_LIB-only typedef; the mmdevapi seam's cast) */
+    static NTSTATUS (* const *resolver_funcs)( void * );
+
+    if (!resolver_funcs)
+    {
+        UNICODE_STRING str = RTL_CONSTANT_STRING( L"wsresolv.dll" );
+        ANSI_STRING func_name;
+        HMODULE module;
+        void *proc;
+
+        if (LdrLoadDll( NULL, 0, &str, &module ))
+        {
+            WARN( "wsresolv.dll not loadable; resolver entry %u answers unavailable\n", code );
+            return code == ws_unix_gethostname ? WSAENETDOWN : WSAHOST_NOT_FOUND;
+        }
+        RtlInitAnsiString( &func_name, "__wine_unix_call_funcs" );
+        if (LdrGetProcedureAddress( module, &func_name, 0, &proc ))
+        {
+            WARN( "wsresolv.dll has no __wine_unix_call_funcs export\n" );
+            LdrUnloadDll( module );
+            return code == ws_unix_gethostname ? WSAENETDOWN : WSAHOST_NOT_FOUND;
+        }
+        /* Racing threads resolve the same address; LdrLoadDll refcounts. */
+        InterlockedExchangePointer( (void **)&resolver_funcs, proc );
+    }
+    return resolver_funcs[code]( args );
+}
 
 static char *get_fqdn(void)
 {

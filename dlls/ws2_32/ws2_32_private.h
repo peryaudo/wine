@@ -136,6 +136,14 @@ struct getnameinfo_params
     int flags;
 };
 
+/* proskrnl: the resolver seam.  ws_pe_resolver latches in DllMain when
+ * __wine_init_unix_call answers STATUS_INVALID_INFO_CLASS (no unixlib
+ * machinery below -- see socket.c); ws2_32_resolver_call then dispatches
+ * the five resolver entries through PE wsresolv.dll's exported
+ * __wine_unix_call_funcs table (protocol.c). */
+extern BOOL ws_pe_resolver;
+extern NTSTATUS ws2_32_resolver_call( unsigned int code, void *args );
+
 enum ws_unix_funcs
 {
     ws_unix_getaddrinfo,
