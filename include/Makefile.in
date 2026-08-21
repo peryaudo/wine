@@ -810,6 +810,7 @@ SOURCES = \
 	propkeydef.h \
 	propsys.idl \
 	propvarutil.h \
+	proskrnl_bootflag.h \
 	prsht.h \
 	psapi.h \
 	pshpack1.h \

@@ -35,6 +35,7 @@
 #include "ddk/wdm.h"
 #include "ntgdi_private.h"
 #include "ntuser_private.h"
+#include "proskrnl_bootflag.h"
 #include "wine/server.h"
 #include "wine/debug.h"
 
@@ -793,6 +794,20 @@ HWND get_desktop_window(void)
     BOOL is_service;
 
     if (thread_info->top_window) return thread_info->top_window;
+
+    /* proskrnl: a boot with no DESKTOP cannot produce a desktop window, and
+     * the rest of this function is not merely futile there, it does not
+     * terminate: with top_window still 0 it falls through to
+     * register_builtin_classes(), whose registrations re-enter
+     * get_desktop_window() on THIS thread, and the second entry spins in
+     * pthread_once() forever waiting for the first to finish. It is not free
+     * on the way there either -- it starts explorer, which is itself a
+     * win32u client taking this same path, and on a uniprocessor kernel each
+     * doomed launch loads user32/gdi32/shell32 before it dies (measured on a
+     * CUI-only boot: 62 of them, 72% of the boot).
+     * Dormant under Wine: no proskrnl guest, no key, and the default is on.
+     * (proskrnl-only; include/proskrnl_bootflag.h.) */
+    if (!prsk_boot_has_desktop()) return 0;
 
     /* don't create an actual explorer desktop window for services */
     is_service = is_service_process();
