@@ -1688,7 +1688,18 @@ static void update_wineprefix( BOOL force )
                 if (process)
                 {
                     MSG msg;
-                    DWORD res = MsgWaitForMultipleObjects( 1, &process, FALSE, INFINITE, QS_ALLINPUT );
+                    /* proskrnl: a boot with no desktop has no message queue,
+                     * so CreateDialogParamW above fails and MsgWaitForMultiple-
+                     * Objects fails immediately every time; with no window to
+                     * pump, PeekMessageW then finds nothing and `continue`
+                     * turns this into a 100%-CPU spin that never observes the
+                     * child exiting -- wineboot --init never returns. Waiting
+                     * plainly is what the loop wants when there is nothing to
+                     * pump. Dormant under Wine: a real Wine boot has a desktop,
+                     * so hwnd is non-NULL and the MsgWait path is unchanged. */
+                    DWORD res = hwnd ? MsgWaitForMultipleObjects( 1, &process, FALSE,
+                                                                  INFINITE, QS_ALLINPUT )
+                                     : WaitForSingleObject( process, INFINITE );
                     if (res != WAIT_OBJECT_0)
                     {
                         while (PeekMessageW( &msg, 0, 0, 0, PM_REMOVE )) DispatchMessageW( &msg );
