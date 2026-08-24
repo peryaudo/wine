@@ -5727,7 +5727,7 @@ static void test_messages(void)
 
     ShowWindow(hwnd, SW_SHOWMAXIMIZED);
     flush_events();
-    ok_sequence(WmShowMaxOverlappedSeq, "ShowWindow(SW_SHOWMAXIMIZED):overlapped", TRUE);
+    ok_sequence(WmShowMaxOverlappedSeq, "ShowWindow(SW_SHOWMAXIMIZED):overlapped", FALSE);
     flush_sequence();
 
     if (GetWindowLongW( hwnd, GWL_STYLE ) & WS_MAXIMIZE)
